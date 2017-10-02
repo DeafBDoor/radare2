@@ -25,8 +25,9 @@ static inline int is_space(char c) {
 }
 
 static const char *skipspaces(const char *s) {
-	while (is_space (*s))
+	while (is_space (*s)) {
 		s++;
+	}
 	return s;
 }
 
@@ -845,10 +846,14 @@ static void rcc_context(REgg *egg, int delta) {
 			char *b, *g, *e, *n;
 			emit->comment (egg, "cond frame %s (%s)", callname, elm);
 			/* TODO: simplify with a single for */
-			b = strchr (conditionstr, '<');	/* below */
-			g = strchr (conditionstr, '>');	/* greater */
-			e = strchr (conditionstr, '=');	/* equal */
-			n = strchr (conditionstr, '!');	/* negate */
+			if (conditionstr) {
+				b = strchr (conditionstr, '<');	/* below */
+				g = strchr (conditionstr, '>');	/* greater */
+				e = strchr (conditionstr, '=');	/* equal */
+				n = strchr (conditionstr, '!');	/* negate */
+			} else {
+				b = g = e = n = NULL;
+			}
 			if (!strcmp (callname, "while")) {
 				char lab[128];
 				sprintf (lab, "__begin_%d_%d_%d", nfunctions,
@@ -1395,7 +1400,7 @@ R_API int r_egg_lang_parsechar(REgg *egg, char c) {
 				// e->jmp(egg, str, 0);
 				// edit this unnessary jmp to bypass tests
 				for (i = 0; i < 32; i++) {
-					for (j = 0; j < nestedi[i]; j++) {
+					for (j = 0; j < nestedi[i] && j < 32; j++) {
 						if (ifelse_table[i][j]) {
 							r_egg_printf (egg, "  __ifelse_%d_%d:\n", i, j);
 							e->jmp (egg, ifelse_table[i][j], 0);

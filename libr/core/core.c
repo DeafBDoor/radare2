@@ -119,17 +119,25 @@ R_API ut64 r_core_get_asmqjmps(RCore *core, const char *str) {
 		int i, pos = 0;
 		int len = strlen (str);
 		for (i = 0; i < len - 1; ++i) {
-			if (!isupper ((ut8)str[i])) return UT64_MAX;
+			if (!isupper ((ut8)str[i])) {
+				return UT64_MAX;
+			}
 			pos *= R_CORE_ASMQJMPS_LETTERS;
 			pos += str[i] - 'A' + 1;
 		}
-		if (!islower ((ut8)str[i])) return UT64_MAX;
+		if (!islower ((ut8)str[i])) {
+			return UT64_MAX;
+		}
 		pos *= R_CORE_ASMQJMPS_LETTERS;
 		pos += str[i] - 'a';
-		if (pos < core->asmqjmps_count) return core->asmqjmps[pos + 1];
+		if (pos < core->asmqjmps_count) {
+			return core->asmqjmps[pos + 1];
+		}
 	} else if (str[0] > '0' && str[1] <= '9') {
 		int pos = str[0] - '0';
-		if (pos <= core->asmqjmps_count) return core->asmqjmps[pos];
+		if (pos <= core->asmqjmps_count) {
+			return core->asmqjmps[pos];
+		}
 	}
 	return UT64_MAX;
 }
@@ -388,13 +396,18 @@ static ut64 num_callback(RNum *userptr, const char *str, int *ok) {
 	case '.':
 		if (core->num->nc.curr_tok=='+') {
 			ut64 off = core->num->nc.number_value.n;
-			if (!off) off = core->offset;
+			if (!off) {
+				off = core->offset;
+			}
 			RAnalFunction *fcn = r_anal_get_fcn_at (core->anal, off, 0);
 			if (fcn) {
-				if (ok) *ok = true;
+				if (ok) {
+					*ok = true;
+				}
 				ut64 dst = r_anal_fcn_label_get (core->anal, fcn, str + 1);
-				if (dst == UT64_MAX)
+				if (dst == UT64_MAX) {
 					dst = fcn->addr;
+				}
 				st64 delta = dst - off;
 				if (delta < 0) {
 					core->num->nc.curr_tok = '-';
@@ -434,7 +447,7 @@ static ut64 num_callback(RNum *userptr, const char *str, int *ok) {
 		// pop state
 		if (ok) *ok = 1;
 		ut8 buf[sizeof (ut64)] = R_EMPTY;
-		(void)r_io_read_at (core->io, n, buf, refsz);
+		(void)r_io_read_at (core->io, n, buf, R_MIN (sizeof (buf), refsz));
 		switch (refsz) {
 		case 8:
 			return r_read_ble64 (buf, core->print->big_endian);
@@ -489,10 +502,9 @@ static ut64 num_callback(RNum *userptr, const char *str, int *ok) {
 		case '{':
 			bptr = strdup (str + 2);
 			ptr = strchr (bptr, '}');
-			if (ptr != NULL) {
-				ut64 ret;
+			if (ptr) {
 				ptr[0] = '\0';
-				ret = r_config_get_i (core->config, bptr);
+				ut64 ret = r_config_get_i (core->config, bptr);
 				free (bptr);
 				return ret;
 			}
@@ -598,7 +610,7 @@ static ut64 num_callback(RNum *userptr, const char *str, int *ok) {
 		}
 		break;
 	default:
-		if (*str>'A') {
+		if (*str > 'A') {
 			// NOTE: functions override flags
 			RAnalFunction *fcn = r_anal_fcn_find_name (core->anal, str);
 			if (fcn) {

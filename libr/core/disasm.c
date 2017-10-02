@@ -48,6 +48,7 @@ static const char* r_vline_u[] = {
 typedef struct r_disam_options_t {
 	RCore *core;
 	char str[1024], strsub[1024];
+	int offless;
 	bool use_esil;
 	bool show_color;
 	bool show_color_bytes;
@@ -414,6 +415,7 @@ static RDisasmState * ds_init(RCore *core) {
 	ds->color_gui_alt_background = P(gui_alt_background): Color_GRAY;
 	ds->color_gui_border = P(gui_border): Color_BGGRAY;
 
+	ds->offless = r_config_get_i (core->config, "asm.offless");
 	ds->use_esil = r_config_get_i (core->config, "asm.esil");
 	ds->show_flgoff = r_config_get_i (core->config, "asm.flgoff");
 	ds->show_nodup = r_config_get_i (core->config, "asm.nodup");
@@ -702,6 +704,20 @@ static void ds_highlight_word(RDisasmState * ds, char *word, char *color) {
 	ds->opstr = asm_str? asm_str:source;
 }
 
+static void offless(char *opstr) {
+	if (!opstr) {
+		return;
+	}
+	char *n = strstr (opstr, "0x");
+	if (n) {
+		char *p = n + 2;
+		while (ISHEXCHAR (*p)) {
+			p++;
+		}
+		memmove (n, p, strlen (p) + 1);
+	}
+}
+
 static void ds_build_op_str(RDisasmState *ds) {
 	RCore *core = ds->core;
 	if (!ds->opstr) {
@@ -737,6 +753,11 @@ static void ds_build_op_str(RDisasmState *ds) {
 		}
 	}
 	char *asm_str = colorize_asm_string (core, ds);
+	if (ds->offless) {
+		offless (ds->opstr);
+		free (asm_str);
+		return;
+	}
 	if (ds->decode) {
 		char *tmpopstr = r_anal_op_to_string (core->anal, &ds->analop);
 		// TODO: Use data from code analysis..not raw ds->analop here
@@ -766,7 +787,7 @@ static void ds_build_op_str(RDisasmState *ds) {
 				if (core->parser->relsub_addr == 0) {
 					ut64 killme = UT64_MAX;
 					const int be = core->assembler->big_endian;
-					r_io_read_i (core->io, ds->analop.ptr, &killme, sizeof (killme), be);
+					r_io_read_i (core->io, ds->analop.ptr, &killme, ds->analop.refptr, be);
 					core->parser->relsub_addr = (int)killme;
 				}
 			}
@@ -845,9 +866,8 @@ R_API RAnalHint *r_core_hint_begin(RCore *core, RAnalHint* hint, ut64 at) {
 }
 
 static void ds_beginline(RDisasmState *ds, RAnalFunction *f, bool nopre) {
-	const char *pre;
-	ds_setup_pre(ds, false, false);
-	pre = ds->pre;
+	ds_setup_pre (ds, false, false);
+	const char *pre = ds->pre;
 	if (nopre) {
 		if (*pre == '/' || *pre == '\\') {
 			pre = "  ";
@@ -3567,11 +3587,10 @@ R_API int r_core_print_disasm(RPrint *p, RCore *core, ut64 addr, ut8 *buf, int l
 	int ret, i, inc, skip_bytes = 0, idx = 0;
 	int dorepeat = 1;
 	ut8 *nbuf = NULL;
-	RDisasmState *ds;
 	const int addrbytes = core->io->addrbytes;
 
 	// TODO: All those ds must be print flags
-	ds = ds_init (core);
+	RDisasmState *ds = ds_init (core);
 	ds->cbytes = cbytes;
 	ds->print = p;
 	ds->l = l;
@@ -4035,11 +4054,22 @@ R_API int r_core_print_disasm_instructions(RCore *core, int nb_bytes, int nb_opc
 			free (ds->opstr);
 			ds->opstr = strdup (ds->hint->opcode);
 		} else {
-			if (ds->use_esil) {
+			if (ds->decode && !ds->offless) {
+				free (ds->opstr);
+				if (!hasanal) {
+					r_anal_op (core->anal, &ds->analop, ds->at, core->block+i, core->blocksize-i);
+					hasanal = true;
+				}
+				tmpopstr = r_anal_op_to_string (core->anal, &ds->analop);
+				ds->opstr = (tmpopstr)? tmpopstr: strdup (ds->asmop.buf_asm);
+			} else if (ds->offless) {
+				ds->opstr = strdup (ds->asmop.buf_asm);
+				offless (ds->opstr);
+			} else if (ds->use_esil) {
 				if (!hasanal) {
 					r_anal_op (core->anal, &ds->analop,
-						ds->at, core->block+i,
-						core->blocksize-i);
+						ds->at, core->block + i,
+						core->blocksize - i);
 					hasanal = true;
 				}
 				if (*R_STRBUF_SAFEGET (&ds->analop.esil)) {
@@ -4074,14 +4104,9 @@ R_API int r_core_print_disasm_instructions(RCore *core, int nb_bytes, int nb_opc
 			} else {
 				ds->opstr = strdup (ds->asmop.buf_asm);
 			}
-			if (ds->decode) {
-				free (ds->opstr);
-				if (!hasanal) {
-					r_anal_op (core->anal, &ds->analop, ds->at, core->block+i, core->blocksize-i);
-					hasanal = true;
-				}
-				tmpopstr = r_anal_op_to_string (core->anal, &ds->analop);
-				ds->opstr = (tmpopstr)? tmpopstr: strdup (ds->asmop.buf_asm);
+			if (ds->offless) {
+				ds->opstr = strdup (ds->asmop.buf_asm);
+				offless (ds->opstr);
 			}
 		}
 		{
@@ -4674,8 +4699,8 @@ R_API int r_core_print_fcn_disasm(RPrint *p, RCore *core, ut64 addr, int l, int 
 }
 
 static inline bool pdi_check_end(int nb_opcodes, int nb_bytes, int i, int j) {
-	if (nb_opcodes) {
-		if (nb_bytes) {
+	if (nb_opcodes > 0) {
+		if (nb_bytes > 0) {
 			return j < nb_opcodes && i < nb_bytes;
 		}
 		return j < nb_opcodes;
@@ -4692,6 +4717,7 @@ R_API int r_core_disasm_pdi(RCore *core, int nb_opcodes, int nb_bytes, int fmt) 
 	bool asm_ucase = r_config_get_i (core->config, "asm.ucase");
 	int esil = r_config_get_i (core->config, "asm.esil");
 	int flags = r_config_get_i (core->config, "asm.flags");
+	bool asm_offless = r_config_get_i (core->config, "asm.offless");
 	int i = 0, j, ret, err = 0;
 	ut64 old_offset = core->offset;
 	RAsmOp asmop;
@@ -4707,7 +4733,7 @@ R_API int r_core_disasm_pdi(RCore *core, int nb_opcodes, int nb_bytes, int fmt) 
 		return 0;
 	}
 	if (!nb_opcodes) {
-		nb_opcodes = 0xffff;
+		nb_opcodes = -1;
 		if (nb_bytes < 0) {
 			// Backward disasm `nb_bytes` bytes
 			nb_bytes = -nb_bytes;
@@ -4758,7 +4784,10 @@ R_API int r_core_disasm_pdi(RCore *core, int nb_opcodes, int nb_bytes, int fmt) 
 	r_cons_break_push (NULL, NULL);
 
 	int midflags = r_config_get_i (core->config, "asm.midflags");
-	for (i = j = 0; pdi_check_end (nb_opcodes, nb_bytes, addrbytes * i, j); j++) {
+	i = 0;
+	j = 0;
+toro:
+	for (; pdi_check_end (nb_opcodes, nb_bytes, addrbytes * i, j); j++) {
 		RFlagItem *item;
 		if (r_cons_is_breaked ()) {
 			err = 1;
@@ -4846,7 +4875,7 @@ R_API int r_core_disasm_pdi(RCore *core, int nb_opcodes, int nb_bytes, int fmt) 
 				r_cons_printf ("%20s  ", asmop.buf_hex);
 			}
 			ret = asmop.size;
-			if (decode || esil) {
+			if (!asm_offless && (decode || esil)) {
 				RAnalOp analop = {
 					0
 				};
@@ -4863,6 +4892,9 @@ R_API int r_core_disasm_pdi(RCore *core, int nb_opcodes, int nb_bytes, int fmt) 
 					} else if (esil) {
 						opstr = (R_STRBUF_SAFEGET (&analop.esil));
 					}
+					if (asm_offless) {
+						offless (opstr);
+					}
 					r_cons_println (opstr);
 				}
 			} else {
@@ -4873,6 +4905,9 @@ R_API int r_core_disasm_pdi(RCore *core, int nb_opcodes, int nb_bytes, int fmt) 
 
 				if (asm_ucase) {
 					r_str_case (asm_str, 1);
+				}
+				if (asm_offless) {
+					offless (asm_str);
 				}
 
 				if (filter) {
@@ -4900,13 +4935,13 @@ R_API int r_core_disasm_pdi(RCore *core, int nb_opcodes, int nb_bytes, int fmt) 
 			}
 		}
 		i += ret;
-#if 0
-		if ((nb_bytes && (nb_bytes <= i)) || (i >= core->blocksize)) {
-			break;
-		}
-#endif
+	}
+	if (nb_opcodes > 0 && j < nb_opcodes) {
+		r_core_seek (core, core->offset + i, 1);
+		i = 0;
+		goto toro;
 	}
 	r_cons_break_pop ();
-	core->offset = old_offset;
+	r_core_seek (core, old_offset, 1);
 	return err;
 }
